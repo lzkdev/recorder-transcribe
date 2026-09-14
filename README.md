@@ -6,9 +6,7 @@
 
 把下面这段话发给你的 Agent：
 
-```text
-请读取 https://raw.githubusercontent.com/lzkdev/recorder-transcribe/main/INSTALL.md ，按照说明安装 recorder-transcribe skill，检查并安装缺少的依赖，帮我完成飞书连接。需要我操作时，把授权链接发给我。
-```
+> 请读取 [INSTALL.md](https://raw.githubusercontent.com/lzkdev/recorder-transcribe/main/INSTALL.md)，按照说明安装 recorder-transcribe skill，检查并安装缺少的依赖，帮我完成飞书连接。需要我操作时，把授权链接发给我。
 
 ## 使用
 
@@ -20,8 +18,10 @@
 
 > 把这个目录里的录音批量转写，已经处理过的跳过。
 
+上传前会在本地检查有效人声，疑似空录音会先提醒你。
+
 支持 macOS / Linux 上可执行本地命令的 Agent。首次使用需要飞书授权，转写使用飞书账号额度。
 
-[安装指令](INSTALL.md) · [手动使用](docs/manual.md) · [ChatGPT 接入说明](skills/recorder-transcribe/references/chatgpt.md) · [贡献](CONTRIBUTING.md)
+[安装指令](https://github.com/lzkdev/recorder-transcribe/blob/main/INSTALL.md) · [手动使用](https://github.com/lzkdev/recorder-transcribe/blob/main/docs/manual.md) · [ChatGPT 接入说明](https://github.com/lzkdev/recorder-transcribe/blob/main/skills/recorder-transcribe/references/chatgpt.md) · [贡献](https://github.com/lzkdev/recorder-transcribe/blob/main/CONTRIBUTING.md)
 
-[MIT License](LICENSE)
+[MIT License](https://github.com/lzkdev/recorder-transcribe/blob/main/LICENSE)

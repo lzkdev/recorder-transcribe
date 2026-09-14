@@ -7,6 +7,7 @@ import hashlib
 import json
 import math
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -116,6 +117,34 @@ class Lark:
             raise WorkflowError('Unrecognized or failed lark-cli JSON response; state retained') from e
 
 
+def transcript_has_content(text):
+    # CLI exports a metadata header even when the upstream transcript is empty.
+    lines = text.splitlines()
+    if lines and re.match(r'^\d{4}-\d{2}-\d{2}.*\|', lines[0]):
+        lines = lines[1:]
+        while lines and not lines[0].strip(): lines.pop(0)
+        if lines and lines[0].strip().startswith(('Keywords:', '关键词:','关键词：')):
+            lines = lines[1:]
+    return any(line.strip() for line in lines)
+
+
+def speech_screen(source):
+    python = Path.home() / '.local/share/recorder-transcribe/vad-env/bin/python'
+    if not python.exists():
+        raise WorkflowError('Speech screening unavailable: run python3 scripts/setup.py --install-vad')
+    raw = run([python, Path(__file__).with_name('vad.py'), source], timeout=600)
+    try:
+        data = json.loads(raw)
+        if not all(math.isfinite(float(data[k])) for k in ('speech_seconds','speech_ratio','analyzed_seconds')):
+            raise ValueError('invalid VAD result')
+        if not 0 <= data['speech_ratio'] <= 1 or data['analyzed_seconds'] <= 0:
+            raise ValueError('invalid VAD result')
+        data['needs_confirm'] = data['speech_seconds'] < 1 or data['speech_ratio'] < 0.01
+        return data
+    except (ValueError, KeyError, TypeError) as e:
+        raise WorkflowError('Speech screening failed; no upload performed') from e
+
+
 def fetch_detail(state, job_dir, provider):
     # A read retry cannot create a new minute.
     data = provider.call(['minutes', '+detail', '--minute-tokens', state['minute_token'],
@@ -131,8 +160,11 @@ def fetch_detail(state, job_dir, provider):
         raise WorkflowError('Minute token mismatch')
     artifacts = row.get('artifacts') or {}
     transcript = artifacts.get('transcript_file') if isinstance(artifacts, dict) else None
-    if row.get('error') or row.get('status') not in (None, '', 'OK') or not transcript:
+    if row.get('error') or row.get('status') not in (None, '', 'OK'):
         state['status'] = 'pending'
+        return state
+    if not transcript:
+        state.update(status='empty_result', summary_available=bool(artifacts.get('summary')))
         return state
     file = Path(transcript)
     if not file.is_absolute():
@@ -141,15 +173,19 @@ def fetch_detail(state, job_dir, provider):
     if job_dir.resolve() not in file.parents or not file.is_file():
         raise WorkflowError('Transcript is missing or outside the output directory')
     # Empty transcripts are valid for silence; never invent speech or a summary.
-    state.update(status='done', transcript_file=str(file),
+    state.update(status='done' if transcript_has_content(file.read_text()) else 'empty_result', transcript_file=str(file),
                  summary_available=bool(artifacts.get('summary')))
     return state
 
 
-def process(file, state_dir, provider=None, check_only=False, name=None):
+def process(file, state_dir, provider=None, check_only=False, name=None, allow_low_speech=False):
     source, duration = resolve_audio(file)
     fingerprint = sha256(source)
     result = {'source': str(source), 'sha256': fingerprint, 'duration_seconds': duration}
+    screening = speech_screen(source)
+    result['speech_screen'] = screening
+    if screening['needs_confirm'] and not allow_low_speech:
+        return dict(result, status='needs_confirm', reason='Little or no speech detected; review before uploading')
     if check_only:
         return dict(result, status='valid')
     provider = provider or Lark()
@@ -159,7 +195,12 @@ def process(file, state_dir, provider=None, check_only=False, name=None):
         state_file = job_dir / 'state.json'
         # Corrupt state must not silently reset deduplication.
         state = json.loads(state_file.read_text()) if state_file.exists() else dict(result, status='new')
-        if state['status'] == 'done':
+        if state['status'] in ('done', 'empty_result'):
+            transcript = Path(state.get('transcript_file', ''))
+            if not transcript.is_file() or not transcript_has_content(transcript.read_text()):
+                state['status'] = 'empty_result'
+                atomic_json(state_file, state)
+                return state
             return dict(state, status='cached')
         if state['status'] in ('uploading', 'creating'):
             raise WorkflowError(f'Uncertain {state["status"]} outcome; reconcile remote resources before retry: {state_file}')
@@ -227,6 +268,12 @@ def doctor(executable):
     if not checks['lark_cli']:
         actions.append('Install official pinned CLI: python3 scripts/setup.py --install-cli (run from skill folder)')
         return {'ready': False, 'checks': checks, 'next_steps': actions}
+    vad_python = Path.home() / '.local/share/recorder-transcribe/vad-env/bin/python'
+    try:
+        checks['speech_vad'] = json.loads(run([vad_python, Path(__file__).with_name('vad.py'), '--check']))['ready'] is True
+    except (WorkflowError, ValueError, KeyError, TypeError):
+        checks['speech_vad'] = False
+        actions.append('Install local speech screening: python3 scripts/setup.py --install-vad')
     try:
         for cmd, flags in [('drive', ['--file', '--name']), ('minutes', ['--file-token'])]:
             text = run([executable, cmd, '+upload', '--help'])
@@ -260,6 +307,7 @@ def main():
     parser.add_argument('--batch', action='store_true', help='Process immediate audio children sequentially')
     parser.add_argument('--check-only', action='store_true', help='Validate locally; never upload')
     parser.add_argument('--name')
+    parser.add_argument('--allow-low-speech', action='store_true', help='Upload low-speech audio only after explicit user review')
     parser.add_argument('--doctor', action='store_true', help='Check dependencies and command flags without login')
     parser.add_argument('--lark-cli', default=find_cli())
     parser.add_argument('--state-dir', type=Path,
@@ -288,12 +336,12 @@ def main():
                     row = {'source': str(file), 'status': 'duplicate'}
                 else:
                     seen.add(key)
-                    row = process(file, args.state_dir.expanduser().resolve(), Lark(args.lark_cli), args.check_only, args.name)
+                    row = process(file, args.state_dir.expanduser().resolve(), Lark(args.lark_cli), args.check_only, args.name, args.allow_low_speech)
             except (WorkflowError, OSError, ValueError) as e:
                 row = {'source': str(file), 'status': 'error', 'error': str(e)}
             results.append(row)
             print(json.dumps(row, ensure_ascii=False), flush=True)
-        return 1 if any(r['status'] == 'error' for r in results) else 2 if any(r['status'] == 'pending' for r in results) else 0
+        return 1 if any(r['status'] == 'error' for r in results) else 2 if any(r['status'] in ('pending', 'needs_confirm', 'empty_result') for r in results) else 0
     except (WorkflowError, OSError, ValueError) as e:
         print(json.dumps({'status':'error', 'error':str(e)}, ensure_ascii=False))
         return 1

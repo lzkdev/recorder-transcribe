@@ -54,3 +54,15 @@ lark-cli auth login --scope "drive:file:upload drive:drive.metadata:readonly min
 - 本地 ready：仅说明本地条件满足；可用 `auth status --verify --json` 检查服务器 token，有效配额/具体资源权限仍以一次授权的小样本上传结果为准。
 
 网络/额度错误不自动换账户、提权或重新创建妙记。软件开源免费不等于飞书服务免费，额度和功能取决于实际账号/企业套餐。
+
+## 本地人声检测（上传前必需）
+
+```bash
+python3 scripts/setup.py --install-vad
+```
+
+安装 Silero ONNX 模型及隔离环境的 ONNX Runtime/numpy，不安装 Torch。固定依赖支持 Python 3.9–3.12；安装器优先选择已有 Python 3.12，否则使用当前 Python。更高版本缺少兼容 wheel 时，先安装 Python 3.12 再运行安装器。
+
+模型从 Silero 官方仓库的固定提交下载并校验 SHA-256。检测在本机遍历整段音频，只将明确授权处理的录音上传飞书。缺检测器或检测失败时阻止上传。
+
+连续至少 0.25 秒且模型概率 ≥0.5 的帧计为疑似人声；总人声 <1 秒或占比 <1% 返回 `needs_confirm`，不创建云文件。阈值是保守筛查，不证明录音绝对无声，也不保证通过的录音一定能准确转写。用户确认后才可使用 `--allow-low-speech`。

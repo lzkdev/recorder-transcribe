@@ -41,6 +41,9 @@ class WorkflowTests(unittest.TestCase):
             w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000)
             w.writeframes(b'\0\0' * 32000)
         self.state = self.root / 'state'
+        self.screen = patch.object(m, 'speech_screen', return_value={'speech_seconds':2,'speech_ratio':1,'analyzed_seconds':2,'needs_confirm':False})
+        self.screen.start()
+        self.addCleanup(self.screen.stop)
     def tearDown(self): self.tmp.cleanup()
     def test_precheck_no_side_effect(self):
         p = Provider()
@@ -101,16 +104,39 @@ class WorkflowTests(unittest.TestCase):
         run.assert_not_called()
     def test_expired_login_blocks(self):
         auth = {'appId': 'example', 'identities': {'user': {'status':'missing','available':False,'scope':' '.join(m.REQUIRED_SCOPES)}}}
-        with patch.object(m.shutil, 'which', return_value='/bin/fake'), patch.object(m, 'run', side_effect=['--file --name','--file-token','--minute-tokens --transcript --output-dir',json.dumps(auth)]):
+        with patch.object(m.shutil, 'which', return_value='/bin/fake'), patch.object(m, 'run', side_effect=['{"ready":true}','--file --name','--file-token','--minute-tokens --transcript --output-dir',json.dumps(auth)]):
             self.assertFalse(m.doctor('fake')['ready'])
     def test_missing_scope_blocks(self):
         auth = {'appId': 'example', 'identities': {'user': {'status':'ready','available':True,'scope':''}}}
-        with patch.object(m.shutil, 'which', return_value='/bin/fake'), patch.object(m, 'run', side_effect=['--file --name','--file-token','--minute-tokens --transcript --output-dir',json.dumps(auth)]):
+        with patch.object(m.shutil, 'which', return_value='/bin/fake'), patch.object(m, 'run', side_effect=['{"ready":true}','--file --name','--file-token','--minute-tokens --transcript --output-dir',json.dumps(auth)]):
             d=m.doctor('fake')
         self.assertFalse(d['ready']); self.assertFalse(d['checks']['scopes'])
     def test_provider_error_json_not_success(self):
         with patch.object(m, 'run', return_value='{"ok":false,"error":{"code":123}}'):
             with self.assertRaises(m.WorkflowError): m.Lark().call([], self.root)
+    def test_low_speech_stops_before_any_upload(self):
+        with patch.object(m, 'speech_screen', return_value={'speech_seconds':0,'speech_ratio':0,'analyzed_seconds':2,'needs_confirm':True}):
+            p=Provider()
+            self.assertEqual(m.process(self.audio,self.state,p)['status'],'needs_confirm')
+            self.assertEqual(p.calls,[])
+            self.assertFalse(self.state.exists())
+    def test_missing_vad_cannot_be_bypassed(self):
+        with patch.object(m, 'speech_screen', side_effect=m.WorkflowError('VAD unavailable')):
+            p=Provider()
+            with self.assertRaises(m.WorkflowError):m.process(self.audio,self.state,p,allow_low_speech=True)
+            self.assertEqual(p.calls,[])
+    def test_metadata_only_transcript_is_not_done(self):
+        p=Provider();state=m.process(self.audio,self.state,p)
+        Path(state['transcript_file']).write_text('2026-01-01 00:00:00 CST|14min 59s\n\nKeywords:\n\n')
+        self.assertEqual(m.process(self.audio,self.state,p)['status'],'empty_result')
+        self.assertEqual(len(p.calls),3)
+    def test_transcript_content(self):
+        self.assertFalse(m.transcript_has_content(''))
+        self.assertFalse(m.transcript_has_content('2026-01-01 00:00 CST|2s\n\nKeywords:\n'))
+        self.assertTrue(m.transcript_has_content('2026-01-01 00:00 CST|2s\n\nKeywords:\n\n说话人1：你好。'))
+    def test_explicit_override_allows_low_speech(self):
+        with patch.object(m, 'speech_screen', return_value={'speech_seconds':0,'speech_ratio':0,'analyzed_seconds':2,'needs_confirm':True}):
+            self.assertEqual(m.process(self.audio,self.state,Provider(),allow_low_speech=True)['status'],'done')
     def test_concurrent_run_rejected(self):
         with m.locked(self.state):
             with self.assertRaises(m.WorkflowError):
