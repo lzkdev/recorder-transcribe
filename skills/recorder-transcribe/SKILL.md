@@ -15,9 +15,9 @@ description: 将用户指定的本地录音或 USB 录音卡音频交给飞书�
 python3 scripts/recorder.py --doctor
 ```
 
-检查 Python 3.9+、ffmpeg、ffprobe、lark-cli 命令兼容性、应用配置、用户登录和所需权限。`--doctor` 不安装、不登录、不上传。没有 Python 时，先提示安装 Python 3.9+；macOS 可用 `brew install python`，Linux 使用发行版包管理器。
+检查 Python 3.9+、ffmpeg、ffprobe、lark-cli 命令兼容性、应用配置、用户登录和所需权限。`--doctor` 不安装、不登录、不上传。没有 Python 时，按用户已授权的安装范围准备 Python 3.9+；macOS 可用已有 Homebrew，Linux 使用已有发行版包管理器。
 
-缺 CLI：用户要求安装或已授权完成依赖安装时，运行 `python3 scripts/setup.py --install-cli`。它将官方固定版本安装到用户目录，不使用 sudo、不覆盖已有全局 CLI。其他依赖按初始化文档处理。登录必须由用户完成飞书授权；不读取其他应用的 token、不自动扩大到全部业务域。
+缺 CLI：用户要求安装或已授权完成依赖安装时，运行 `python3 scripts/setup.py --install-cli`。它将官方固定版本安装到用户目录，不使用 sudo、不覆盖已有全局 CLI。其他依赖按初始化文档处理；安装请求已包含必要依赖准备时，由 Agent 执行可完成的步骤，不把命令清单交回用户。登录必须由用户完成飞书授权；不读取其他应用的 token、不自动扩大到全部业务域。
 
 CLI 准备好不等于转写验证成功。bot 登录不能代替创建妙记所需的 user 登录。初始化失败就停在上传前，并给出具体下一步。
 
