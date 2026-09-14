@@ -1,0 +1,17 @@
+.tools/
+__pycache__/
+*.pyc
+.DS_Store
+.env
+.env.*
+!.env.example
+*.wav
+*.mp3
+*.opus
+*.ogg
+*.m4a
+*.flac
+*.zip
+state/
+minutes/
+out/
